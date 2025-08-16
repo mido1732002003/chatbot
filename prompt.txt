@@ -1,0 +1,164 @@
+Build a complete MVP web chat (1-to-1) using Next.js + TailwindCSS + Supabase
+
+You are Claude, a senior full‑stack engineer. Your task is to deliver a clean, scalable MVP for a text-only 1‑to‑1 chat app using Next.js + TailwindCSS + Supabase, designed as a solid foundation for future expansion.
+
+Process and interaction rules
+
+- Work iteratively in Parts.
+- Part 1: propose a clean file structure (frontend + backend inside Next.js).
+- After I approve the file structure, proceed by writing the code file-by-file with explanations, stopping after each Part until I reply with “continue.”
+- Before moving to the next Part, self-review to ensure completeness and consistency.
+- Ask clarifying questions only if something is ambiguous.
+
+Output formatting
+
+- Use headings like “Part 1 — …”
+- For each file, provide its code in a fenced code block with a leading comment containing the file path. Example:
+  ```ts
+  // file: src/lib/supabase/client.ts
+  ```
+- After each file (or grouped files), add a short explanation of key decisions and how it works.
+- At the end of each Part, add a short self-checklist to ensure completeness and catch issues early.
+- Stop after each Part and wait for my “continue.”
+
+Tech stack and constraints
+
+- Next.js 14+ with the App Router (TypeScript, React 18).
+- TailwindCSS 3.x.
+- Supabase (Database, Auth, Realtime) with supabase-js v2.
+- Client-side rendering for simplicity where possible; keep the architecture scalable.
+- No PWA, offline sync, or file uploads in v1.
+- Clean, modular, and commented code.
+- Deployment on Vercel (free) + Supabase (free).
+
+Functional requirements (MVP)
+
+- User registration and login (Supabase Auth, email/password).
+- A text-only 1‑to‑1 chat page:
+  - List of available users (other registered users).
+  - Open/start a conversation with a user.
+  - Display previous messages for the conversation.
+  - Real-time messaging via Supabase Realtime (new messages appear live).
+- Basic UX:
+  - Responsive layout with a left sidebar (user list) and main chat area.
+  - Loading and error states where appropriate.
+  - Sign out button.
+- Future-friendly foundation (clean separation of concerns, modular components, typed utilities).
+
+Data model and security (guidance)
+
+- Use these tables (you will provide the complete SQL with RLS policies):
+  - profiles:
+    - id uuid primary key references auth.users(id) on delete cascade
+    - username text unique not null (lowercased)
+    - full_name text null
+    - avatar_url text null
+    - created_at timestamptz default now()
+    - RLS: authenticated users can select all; users can update only their own row. Create a trigger to auto-insert a profile on user sign-up.
+  - conversations:
+    - id uuid primary key default gen_random_uuid()
+    - member_one uuid not null references auth.users(id)
+    - member_two uuid not null references auth.users(id)
+    - pair_key text generated always as (
+      case when member_one < member_two then member_one::text || ':' || member_two::text
+           else member_two::text || ':' || member_one::text
+      end
+    ) stored unique
+    - created_at timestamptz default now()
+    - RLS: select allowed only if auth.uid() is a member; insert allowed only if auth.uid() = member_one and member_two != auth.uid(); updates not needed; delete none.
+  - messages:
+    - id bigint primary key generated always as identity
+    - conversation_id uuid not null references conversations(id) on delete cascade
+    - sender_id uuid not null references auth.users(id)
+    - body text not null check (length(body) > 0 and length(body) <= 2000)
+    - created_at timestamptz default now()
+    - indexes: (conversation_id, created_at)
+    - RLS: select allowed only to conversation members; insert allowed only if sender_id = auth.uid() and auth.uid() is a member of the conversation.
+- Realtime:
+  - Ensure messages table is added to the Realtime publication (supabase_realtime). Provide SQL to enable this.
+
+Architecture guidance
+
+- Next.js App Router with src/ structure. Suggested top-level folders:
+  - src/app: routes (auth, chat, api), global styles, layout
+  - src/components: UI components (user list, chat window, message list, forms, header)
+  - src/lib: supabase client, types, helpers
+  - src/hooks: e.g., useAuth, useRealtimeMessages
+  - supabase/: SQL schema/migrations/policies files (checked into repo)
+- Keep business rules in helpers/hooks; keep UI presentational components slim.
+- Use TypeScript types for Supabase rows and common DTOs.
+- Keep env var naming consistent:
+  - NEXT_PUBLIC_SUPABASE_URL
+  - NEXT_PUBLIC_SUPABASE_ANON_KEY
+- Do not expose the service role key to the browser. Avoid needing it by using RLS correctly. For “ensure conversation,” implement client logic: find existing by pair_key; if not found, insert; if unique violation occurs, reselect.
+
+Implementation plan (deliverables by Part)
+
+- Part 1 — Proposed file structure and high-level architecture
+  - Provide a clear folder/file tree.
+  - Explain responsibilities of each folder.
+  - Note the main pages and API routes you plan to include.
+  - Stop and wait for approval.
+- Part 2 — Database schema, RLS policies, and Realtime SQL
+  - Full SQL for tables, constraints, generated columns, indexes, triggers, RLS policies.
+  - Include SQL to add messages to Realtime publication.
+  - Include minimal seed SQL (optional) and instructions to run via Supabase SQL editor.
+  - Self-check and stop.
+- Part 3 — Project setup and config
+  - package.json (scripts), tsconfig, next.config, tailwind.config, postcss config.
+  - app/globals.css with Tailwind base imports.
+  - Installation commands and how to run locally.
+  - Self-check and stop.
+- Part 4 — Supabase client and auth utilities
+  - src/lib/supabase/client.ts
+  - src/lib/types.ts (common types)
+  - src/hooks/useAuth.ts and a simple AuthProvider if needed.
+  - Middleware/guard approach for protecting the chat route (client-side redirect is fine for MVP).
+  - Self-check and stop.
+- Part 5 — Auth pages (Sign Up / Sign In) and profile handling
+  - /sign-up and /sign-in pages with email/password.
+  - Username capture (either in sign-up flow or a simple post-sign-in “set username” form).
+  - Basic validation and friendly errors.
+  - Self-check and stop.
+- Part 6 — Chat layout and user list
+  - /chat page with responsive split layout.
+  - UserList component to show all other users; clicking a user ensures a conversation exists (find or create) then loads messages.
+  - Self-check and stop.
+- Part 7 — Messages: list, input, and realtime
+  - MessageList component: fetch previous messages (e.g., latest 50) and render; basic auto-scroll.
+  - MessageInput component: send messages (optimistic update optional), basic validation, disabled while sending.
+  - Supabase Realtime subscription to messages for the active conversation.
+  - Self-check and stop.
+- Part 8 — API routes (if any) and utilities
+  - If needed for any server mediation, add minimal Next.js Route Handlers under app/api (ensure no service role is used on the client).
+  - Error handling and edge cases.
+  - Self-check and stop.
+- Part 9 — Deployment
+  - Step-by-step: deploy to Vercel (free), connect environment variables, connect to Supabase (free).
+  - Post-deploy checks (auth, Realtime).
+  - README.md with setup, env vars, commands, and deployment steps.
+  - Self-check and stop.
+
+Coding standards
+
+- TypeScript strict mode; consistent imports; absolute imports via tsconfig paths where convenient.
+- Clear naming; small, focused components; comments on non-obvious logic and RLS policies.
+- Minimal dependencies (avoid heavy UI libraries; Tailwind only).
+- Handle loading and error states.
+- Keep the UI clean and accessible enough for an MVP.
+
+Constraints to respect
+
+- Text-only chat, 1-to-1 only.
+- Must list users, show previous messages, and update in real-time.
+- No PWA/offline/file uploads for v1.
+- Do not use Supabase service role on the client. Prefer RLS and client-only logic for conversation creation (find-or-create pattern with unique pair_key).
+
+Deliverable quality
+
+- The result must be a fully working, clean MVP that I can deploy on Vercel and connect to a Supabase project, serving as a solid base for future features (typing indicators, read receipts, presence, message statuses, etc.).
+- Review each Part for completeness before moving on.
+
+Begin now.
+
+Part 1 — Propose the full file structure and a brief architecture overview. Then stop and wait for my approval.

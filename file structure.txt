@@ -1,0 +1,66 @@
+nextjs-chat-mvp/
+├── src/
+│   ├── app/
+│   │   ├── (auth)/
+│   │   │   ├── sign-in/
+│   │   │   │   └── page.tsx
+│   │   │   ├── sign-up/
+│   │   │   │   └── page.tsx
+│   │   │   └── layout.tsx
+│   │   ├── chat/
+│   │   │   └── page.tsx
+│   │   ├── api/
+│   │   │   └── auth/
+│   │   │       └── callback/
+│   │   │           └── route.ts
+│   │   ├── layout.tsx
+│   │   ├── page.tsx
+│   │   └── globals.css
+│   ├── components/
+│   │   ├── auth/
+│   │   │   ├── SignInForm.tsx
+│   │   │   ├── SignUpForm.tsx
+│   │   │   └── UsernameForm.tsx
+│   │   ├── chat/
+│   │   │   ├── ChatLayout.tsx
+│   │   │   ├── ConversationArea.tsx
+│   │   │   ├── MessageList.tsx
+│   │   │   ├── MessageInput.tsx
+│   │   │   ├── MessageItem.tsx
+│   │   │   └── UserList.tsx
+│   │   ├── shared/
+│   │   │   ├── Header.tsx
+│   │   │   ├── LoadingSpinner.tsx
+│   │   │   └── ErrorMessage.tsx
+│   │   └── providers/
+│   │       └── AuthProvider.tsx
+│   ├── lib/
+│   │   ├── supabase/
+│   │   │   ├── client.ts
+│   │   │   └── server.ts
+│   │   ├── types/
+│   │   │   ├── database.ts
+│   │   │   └── chat.ts
+│   │   └── utils/
+│   │       ├── conversation.ts
+│   │       └── validation.ts
+│   ├── hooks/
+│   │   ├── useAuth.ts
+│   │   ├── useConversation.ts
+│   │   ├── useMessages.ts
+│   │   └── useRealtimeMessages.ts
+│   └── middleware.ts
+├── supabase/
+│   ├── migrations/
+│   │   └── 001_initial_schema.sql
+│   └── seed.sql
+├── public/
+│   └── (static assets if needed)
+├── .env.local.example
+├── .gitignore
+├── next.config.js
+├── package.json
+├── postcss.config.js
+├── tailwind.config.ts
+├── tsconfig.json
+└── README.md

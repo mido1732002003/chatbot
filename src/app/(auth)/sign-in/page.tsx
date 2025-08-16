@@ -13,14 +13,19 @@ export default function SignInPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Redirect if already authenticated
+  // Redirect if already authenticated - with debounce
   useEffect(() => {
-    if (user) {
+    if (!user || isLoading || authLoading) return;
+    
+    const redirectTimer = setTimeout(() => {
       router.replace('/chat')
-    }
-  }, [user, router])
+    }, 100) // Small delay to prevent rapid redirects
+    
+    return () => clearTimeout(redirectTimer)
+  }, [user, router, isLoading, authLoading])
 
   const handleSignIn = async (formData: SignInFormData) => {
+    // Prevent multiple simultaneous sign-in attempts
     if (isLoading || authLoading) return
     
     setIsLoading(true)
@@ -30,10 +35,11 @@ export default function SignInPage() {
       const { error } = await signIn(formData.email, formData.password)
       if (error) {
         setError(error)
-      } else {
-        router.replace('/chat')
+        setIsLoading(false) // Reset loading on error
       }
-    } finally {
+      // Don't set loading false on success - let the redirect handle it
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Sign in failed')
       setIsLoading(false)
     }
   }

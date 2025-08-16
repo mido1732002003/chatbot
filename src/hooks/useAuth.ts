@@ -126,27 +126,66 @@ export function useAuth() {
     }
   }, [supabase, fetchProfile])
 
-  // auth methods
+  // auth methods with improved state management and error handling
   const signIn = useCallback(async (email: string, password: string) => {
-    setAuthState((prev) => ({ ...prev, loading: true }))
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
-    if (error) {
-      setAuthState((prev) => ({ ...prev, error: error.message, loading: false }))
-      return { error: error.message }
+    let mounted = true;
+    
+    try {
+      setAuthState((prev) => ({ ...prev, loading: true, error: null }))
+      
+      // Attempt sign in
+      const { data, error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
+
+      if (!mounted) return { error: null };
+
+      if (signInError) {
+        setAuthState((prev) => ({ 
+          ...prev, 
+          error: signInError.message, 
+          loading: false 
+        }))
+        return { error: signInError.message }
+      }
+
+      // Update auth state immediately with user and session
+      setAuthState((prev) => ({
+        ...prev,
+        user: data.user,
+        session: data.session,
+        loading: false,
+        error: null,
+      }))
+
+      // Fetch profile in the background if needed
+      if (data.user) {
+        const profile = await fetchProfile(data.user.id)
+        if (mounted) {
+          setAuthState((prev) => ({
+            ...prev,
+            profile,
+          }))
+        }
+      }
+
+      return { error: null }
+    } catch (err) {
+      if (!mounted) return { error: null };
+      
+      const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred'
+      setAuthState((prev) => ({ 
+        ...prev, 
+        error: errorMessage, 
+        loading: false 
+      }))
+      return { error: errorMessage }
     }
-    const user = data.user
-    const profile = user ? await fetchProfile(user.id) : null
-    setAuthState({
-      user,
-      profile,
-      session: data.session,
-      loading: false,
-      error: null,
-    })
-    return { error: null }
+    
+    return () => {
+      mounted = false
+    }
   }, [supabase, fetchProfile])
 
   const signUp = useCallback(async (email: string, password: string) => {

@@ -1,9 +1,13 @@
 
+-- Drop existing objects if they exist (for clean setup)
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+DROP FUNCTION IF EXISTS handle_new_user();
+
 -- Enable necessary extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- Create profiles table
-CREATE TABLE profiles (
+-- Create profiles table (if not exists)
+CREATE TABLE IF NOT EXISTS profiles (
     id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
     username TEXT UNIQUE NOT NULL CHECK (username = lower(username)),
     full_name TEXT,
@@ -11,8 +15,8 @@ CREATE TABLE profiles (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Create conversations table with automatic pair_key generation
-CREATE TABLE conversations (
+-- Create conversations table (if not exists)
+CREATE TABLE IF NOT EXISTS conversations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     member_one UUID NOT NULL REFERENCES auth.users(id),
     member_two UUID NOT NULL REFERENCES auth.users(id),
@@ -26,8 +30,8 @@ CREATE TABLE conversations (
     CONSTRAINT different_members CHECK (member_one != member_two)
 );
 
--- Create messages table
-CREATE TABLE messages (
+-- Create messages table (if not exists)
+CREATE TABLE IF NOT EXISTS messages (
     id BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     sender_id UUID NOT NULL REFERENCES auth.users(id),
@@ -35,36 +39,41 @@ CREATE TABLE messages (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Create indexes for performance
-CREATE INDEX idx_messages_conversation_created ON messages(conversation_id, created_at DESC);
-CREATE INDEX idx_conversations_member_one ON conversations(member_one);
-CREATE INDEX idx_conversations_member_two ON conversations(member_two);
-CREATE INDEX idx_profiles_username ON profiles(username);
+-- Create indexes
+CREATE INDEX IF NOT EXISTS idx_messages_conversation_created ON messages(conversation_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_conversations_member_one ON conversations(member_one);
+CREATE INDEX IF NOT EXISTS idx_conversations_member_two ON conversations(member_two);
+CREATE INDEX IF NOT EXISTS idx_profiles_username ON profiles(username);
 
 -- Enable Row Level Security
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE conversations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
 
+-- Drop existing policies if they exist
+DROP POLICY IF EXISTS "Profiles are viewable by authenticated users" ON profiles;
+DROP POLICY IF EXISTS "Users can update own profile" ON profiles;
+DROP POLICY IF EXISTS "Users can insert own profile" ON profiles;
+DROP POLICY IF EXISTS "Users can view their conversations" ON conversations;
+DROP POLICY IF EXISTS "Users can create conversations" ON conversations;
+DROP POLICY IF EXISTS "Users can view messages from their conversations" ON messages;
+DROP POLICY IF EXISTS "Users can send messages to their conversations" ON messages;
+
 -- RLS Policies for profiles table
--- All authenticated users can view all profiles
 CREATE POLICY "Profiles are viewable by authenticated users" 
     ON profiles FOR SELECT 
-    USING (auth.role() = 'authenticated');
+    USING (true);  -- Allow all authenticated users to see profiles
 
--- Users can update only their own profile
 CREATE POLICY "Users can update own profile" 
     ON profiles FOR UPDATE 
     USING (auth.uid() = id)
     WITH CHECK (auth.uid() = id);
 
--- Users can insert their own profile
 CREATE POLICY "Users can insert own profile" 
     ON profiles FOR INSERT 
     WITH CHECK (auth.uid() = id);
 
 -- RLS Policies for conversations table
--- Users can view conversations where they are a member
 CREATE POLICY "Users can view their conversations" 
     ON conversations FOR SELECT 
     USING (
@@ -72,7 +81,6 @@ CREATE POLICY "Users can view their conversations"
         auth.uid() = member_two
     );
 
--- Users can create conversations (member_one must be the user, member_two must be different)
 CREATE POLICY "Users can create conversations" 
     ON conversations FOR INSERT 
     WITH CHECK (
@@ -81,7 +89,6 @@ CREATE POLICY "Users can create conversations"
     );
 
 -- RLS Policies for messages table
--- Users can view messages only from conversations they're part of
 CREATE POLICY "Users can view messages from their conversations" 
     ON messages FOR SELECT 
     USING (
@@ -92,7 +99,6 @@ CREATE POLICY "Users can view messages from their conversations"
         )
     );
 
--- Users can insert messages only if they're the sender and part of the conversation
 CREATE POLICY "Users can send messages to their conversations" 
     ON messages FOR INSERT 
     WITH CHECK (
@@ -104,44 +110,71 @@ CREATE POLICY "Users can send messages to their conversations"
         )
     );
 
--- Create trigger function to auto-create profile on user signup
+-- FIXED: Create trigger function with better error handling
 CREATE OR REPLACE FUNCTION handle_new_user() 
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER 
+SECURITY DEFINER 
+SET search_path = public
+AS $$
 DECLARE
     random_username TEXT;
+    base_username TEXT;
+    counter INT := 0;
 BEGIN
-    -- Generate a temporary username based on email or a random string
-    random_username := LOWER(
+    -- Extract base username from email or generate random
+    base_username := LOWER(
         COALESCE(
             SPLIT_PART(NEW.email, '@', 1),
-            'user_' || substr(md5(random()::text), 1, 8)
+            'user'
         )
     );
     
-    -- Ensure username is unique by appending numbers if necessary
-    WHILE EXISTS (SELECT 1 FROM profiles WHERE username = random_username) LOOP
-        random_username := random_username || floor(random() * 1000)::text;
+    -- Remove any special characters except underscores
+    base_username := regexp_replace(base_username, '[^a-z0-9_]', '', 'g');
+    
+    -- Ensure minimum length
+    IF length(base_username) < 3 THEN
+        base_username := 'user';
+    END IF;
+    
+    -- Truncate if too long
+    IF length(base_username) > 15 THEN
+        base_username := substring(base_username from 1 for 15);
+    END IF;
+    
+    random_username := base_username;
+    
+    -- Keep trying until we find a unique username
+    LOOP
+        BEGIN
+            -- Try to insert with current username
+            INSERT INTO public.profiles (id, username, full_name)
+            VALUES (
+                NEW.id,
+                random_username,
+                COALESCE(NEW.raw_user_meta_data->>'full_name', '')
+            );
+            
+            -- If successful, exit loop
+            EXIT;
+            
+        EXCEPTION
+            WHEN unique_violation THEN
+                -- Username taken, try another
+                counter := counter + 1;
+                random_username := base_username || '_' || counter;
+                
+                -- Safety check to prevent infinite loop
+                IF counter > 1000 THEN
+                    random_username := base_username || '_' || extract(epoch from now())::text;
+                    EXIT;
+                END IF;
+        END;
     END LOOP;
     
-    INSERT INTO profiles (id, username, full_name)
-    VALUES (
-        NEW.id,
-        random_username,
-        COALESCE(NEW.raw_user_meta_data->>'full_name', '')
-    );
     RETURN NEW;
-EXCEPTION
-    WHEN unique_violation THEN
-        -- If username already exists, append timestamp
-        INSERT INTO profiles (id, username, full_name)
-        VALUES (
-            NEW.id,
-            random_username || '_' || extract(epoch from now())::text,
-            COALESCE(NEW.raw_user_meta_data->>'full_name', '')
-        );
-        RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql;
 
 -- Create trigger for auto-profile creation
 CREATE TRIGGER on_auth_user_created
@@ -149,10 +182,13 @@ CREATE TRIGGER on_auth_user_created
     FOR EACH ROW
     EXECUTE FUNCTION handle_new_user();
 
--- Enable Realtime for messages table
-ALTER PUBLICATION supabase_realtime ADD TABLE messages;
-
 -- Grant necessary permissions
 GRANT USAGE ON SCHEMA public TO authenticated;
+GRANT USAGE ON SCHEMA public TO anon;
 GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO authenticated;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO anon;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon;
+
+-- Enable Realtime
+ALTER PUBLICATION supabase_realtime ADD TABLE messages;

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { SignInForm } from '@/components/auth/SignInForm'
@@ -9,11 +9,20 @@ import type { SignInFormData } from '@/types/chat'
 
 export default function SignInPage() {
   const router = useRouter()
-  const { signIn, loading: authLoading } = useAuth() // Get auth loading state
+  const { signIn, loading: authLoading, user } = useAuth()
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Redirect if already authenticated
+  useEffect(() => {
+    if (user) {
+      router.replace('/chat')
+    }
+  }, [user, router])
+
   const handleSignIn = async (formData: SignInFormData) => {
+    if (isLoading || authLoading) return
+    
     setIsLoading(true)
     setError(null)
 
@@ -21,8 +30,9 @@ export default function SignInPage() {
       const { error } = await signIn(formData.email, formData.password)
       if (error) {
         setError(error)
+      } else {
+        router.replace('/chat')
       }
-      // Let useAuth handle the redirect automatically
     } finally {
       setIsLoading(false)
     }

@@ -21,11 +21,11 @@ export function useAuth() {
     user: null,
     profile: null,
     session: null,
-    loading: false, // 👈 ما تبدأش بلودينج
+    loading: true, // Start with loading true only for auth state
     error: null,
   })
 
-  // fetch profile helper
+  // fetch profile helper - now returns immediately with loading state
   const fetchProfile = useCallback(async (userId: string) => {
     const { data, error } = await supabase
       .from('profiles')
@@ -40,33 +40,63 @@ export function useAuth() {
     return data
   }, [supabase])
 
-  // init session on mount
+  // init session on mount - non-blocking
   useEffect(() => {
+    let mounted = true
+
     const init = async () => {
-      setAuthState((prev) => ({ ...prev, loading: true }))
       const { data } = await supabase.auth.getSession()
       const session = data.session
+      
+      if (!mounted) return
+
+      // Update auth state immediately without profile
       setAuthState({
         user: session?.user ?? null,
-        profile: session?.user ? await fetchProfile(session.user.id) : null,
+        profile: null, // Profile will be loaded separately
         session,
         loading: false,
         error: null,
       })
+
+      // Load profile in the background if needed
+      if (session?.user) {
+        const profile = await fetchProfile(session.user.id)
+        if (mounted) {
+          setAuthState(prev => ({
+            ...prev,
+            profile
+          }))
+        }
+      }
     }
 
     init()
 
-    // subscribe to auth changes
+    // subscribe to auth changes - now non-blocking
     const { data: listener } = supabase.auth.onAuthStateChange(
       async (_event, session) => {
-        setAuthState({
+        if (!mounted) return
+
+        // Update auth state immediately
+        setAuthState(prev => ({
           user: session?.user ?? null,
-          profile: session?.user ? await fetchProfile(session.user.id) : null,
+          profile: null, // Profile will be updated separately
           session,
           loading: false,
           error: null,
-        })
+        }))
+
+        // Load profile in background if needed
+        if (session?.user) {
+          const profile = await fetchProfile(session.user.id)
+          if (mounted) {
+            setAuthState(prev => ({
+              ...prev,
+              profile
+            }))
+          }
+        }
       }
     )
 

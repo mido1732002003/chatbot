@@ -1,8 +1,7 @@
-'use client'
-
-import { useState, useEffect, useCallback } from 'react'
+// useAuth.ts
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
+import { getClient } from '@/lib/supabaseClient'
 
 interface AuthState {
   user: any | null
@@ -10,19 +9,22 @@ interface AuthState {
   session: any | null
   loading: boolean
   error: string | null
+  signIn: (email: string, password: string) => Promise<{ error: string | null }>
+  signOut: () => Promise<void>
 }
 
 export function useAuth() {
-  const [authState, setAuthState] = useState<AuthState>({
+  const [authState, setAuthState] = useState<Omit<AuthState, 'signIn' | 'signOut'>>({
     user: null,
     profile: null,
     session: null,
     loading: true,
     error: null,
   })
-
+  
   const router = useRouter()
-  const supabase = createClientComponentClient()
+  const supabase = getClient()
+  const mountedRef = useRef(true)
 
   const fetchProfile = useCallback(async (userId: string) => {
     try {
@@ -41,22 +43,26 @@ export function useAuth() {
   }, [supabase])
 
   useEffect(() => {
+    let mounted = true
+
     const initAuth = async () => {
       try {
         const { data: { session }, error } = await supabase.auth.getSession()
-
+        
         if (error) throw error
 
-        if (session?.user) {
+        if (session?.user && mounted) {
           const profile = await fetchProfile(session.user.id)
-          setAuthState({
-            user: session.user,
-            profile,
-            session,
-            loading: false,
-            error: null,
-          })
-        } else {
+          if (mounted) {
+            setAuthState({
+              user: session.user,
+              profile,
+              session,
+              loading: false,
+              error: null,
+            })
+          }
+        } else if (mounted) {
           setAuthState({
             user: null,
             profile: null,
@@ -67,24 +73,30 @@ export function useAuth() {
         }
       } catch (error) {
         console.error('Auth initialization error:', error)
-        setAuthState({
-          user: null,
-          profile: null,
-          session: null,
-          loading: false,
-          error: 'Failed to initialize authentication',
-        })
+        if (mounted) {
+          setAuthState({ 
+            user: null,
+            profile: null,
+            session: null,
+            loading: false, 
+            error: 'Failed to initialize authentication' 
+          })
+        }
       }
     }
 
     initAuth()
 
-    const { data: subscription } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        console.log('Auth event:', event)
-
-        if (session?.user) {
-          const profile = await fetchProfile(session.user.id)
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (!mounted) return
+      
+      console.log('Auth event:', event)
+      
+      if (session?.user) {
+        const profile = await fetchProfile(session.user.id)
+        if (mounted) {
           setAuthState({
             user: session.user,
             profile,
@@ -92,28 +104,48 @@ export function useAuth() {
             loading: false,
             error: null,
           })
-        } else {
-          setAuthState({
-            user: null,
-            profile: null,
-            session: null,
-            loading: false,
-            error: null,
-          })
         }
-
-        if (event === 'SIGNED_IN') {
-          router.push('/chat')
-        } else if (event === 'SIGNED_OUT') {
-          router.push('/sign-in')
-        }
+      } else if (mounted) {
+        setAuthState({
+          user: null,
+          profile: null,
+          session: null,
+          loading: false,
+          error: null,
+        })
       }
-    )
+
+      if (event === 'SIGNED_IN' && mounted) {
+        router.push('/chat')
+      } else if (event === 'SIGNED_OUT' && mounted) {
+        router.push('/sign-in')
+      }
+    })
 
     return () => {
-      subscription.subscription.unsubscribe()
+      mounted = false
+      subscription.unsubscribe()
     }
   }, [supabase, router, fetchProfile])
 
-  return authState
+  // ✅ signIn
+  const signIn = async (email: string, password: string) => {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    })
+
+    if (error) {
+      return { error: error.message }
+    }
+
+    return { error: null }
+  }
+
+  // ✅ signOut
+  const signOut = async () => {
+    await supabase.auth.signOut()
+  }
+
+  return { ...authState, signIn, signOut }
 }

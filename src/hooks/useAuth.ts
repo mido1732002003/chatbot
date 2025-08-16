@@ -1,6 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+'use client'
+
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
+import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
 
 interface AuthState {
   user: any | null
@@ -18,17 +20,9 @@ export function useAuth() {
     loading: true,
     error: null,
   })
-  
-  const router = useRouter()
-  const supabase = createClient()
-  const mountedRef = useRef(true)
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      mountedRef.current = false
-    }
-  }, [])
+  const router = useRouter()
+  const supabase = createClientComponentClient()
 
   const fetchProfile = useCallback(async (userId: string) => {
     try {
@@ -47,27 +41,22 @@ export function useAuth() {
   }, [supabase])
 
   useEffect(() => {
-    let mounted = true
-
     const initAuth = async () => {
       try {
         const { data: { session }, error } = await supabase.auth.getSession()
-        
+
         if (error) throw error
 
-        if (session?.user && mounted) {
+        if (session?.user) {
           const profile = await fetchProfile(session.user.id)
-          if (mounted) {
-            setAuthState({
-              user: session.user,
-              profile,
-              session,
-              loading: false,
-              error: null,
-            })
-          }
-        } else if (mounted) {
-          // لازم هنا نوقف اللف ونقول انه مش لوج ان
+          setAuthState({
+            user: session.user,
+            profile,
+            session,
+            loading: false,
+            error: null,
+          })
+        } else {
           setAuthState({
             user: null,
             profile: null,
@@ -78,38 +67,32 @@ export function useAuth() {
         }
       } catch (error) {
         console.error('Auth initialization error:', error)
-        if (mounted) {
-          setAuthState({ 
-            user: null,
-            profile: null,
-            session: null,
-            loading: false, 
-            error: 'Failed to initialize authentication' 
-          })
-        }
+        setAuthState({
+          user: null,
+          profile: null,
+          session: null,
+          loading: false,
+          error: 'Failed to initialize authentication',
+        })
       }
     }
 
     initAuth()
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+    const { data: subscription } = supabase.auth.onAuthStateChange(
       async (event, session) => {
-        if (!mounted) return
-        
         console.log('Auth event:', event)
-        
+
         if (session?.user) {
           const profile = await fetchProfile(session.user.id)
-          if (mounted) {
-            setAuthState({
-              user: session.user,
-              profile,
-              session,
-              loading: false,
-              error: null,
-            })
-          }
-        } else if (mounted) {
+          setAuthState({
+            user: session.user,
+            profile,
+            session,
+            loading: false,
+            error: null,
+          })
+        } else {
           setAuthState({
             user: null,
             profile: null,
@@ -119,17 +102,16 @@ export function useAuth() {
           })
         }
 
-        if (event === 'SIGNED_IN' && mounted) {
+        if (event === 'SIGNED_IN') {
           router.push('/chat')
-        } else if (event === 'SIGNED_OUT' && mounted) {
+        } else if (event === 'SIGNED_OUT') {
           router.push('/sign-in')
         }
       }
     )
 
     return () => {
-      mounted = false
-      subscription.unsubscribe()
+      subscription.subscription.unsubscribe()
     }
   }, [supabase, router, fetchProfile])
 

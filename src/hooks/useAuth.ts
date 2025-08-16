@@ -1,6 +1,27 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { us  // fetch profile helper with improved SQL query and error handling
+  const fetchProfile = useCallback(async (userId: string) => {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, username, full_name, avatar_url, created_at')  // Explicit column selection
+      .eq('id', userId)
+      .maybeSingle()  // Better than .single() as it won't error if no row found
+
+    if (error) {
+      // Handle specific database errors
+      if (error.code === '42P01') {  // Table not found
+        console.error('Table "profiles" does not exist:', error.message)
+      } else if (error.code === '42703') {  // Column not found
+        console.error('Invalid column reference:', error.message)
+      } else {
+        console.error('Error fetching profile:', error.message)
+      }
+      return null
+    }
+
+    return data
+  }, [supabase])ect, useCallback } from 'react'
 import { getClient } from '@/lib/supabase/client'
 import type { User, Session } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'

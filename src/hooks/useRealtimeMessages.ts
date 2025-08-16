@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef, useCallback } from 'react'
 import { getClient } from '@/lib/supabase/client'
 import { useAuthContext } from '@/components/providers/AuthProvider'
 import type { RealtimeChannel } from '@supabase/supabase-js'
@@ -9,15 +9,25 @@ export function useRealtimeMessages(
 ) {
   const { user } = useAuthContext()
   const supabase = getClient()
+  const channelRef = useRef<RealtimeChannel | null>(null)
+  const onNewMessageRef = useRef(onNewMessage)
+
+  // Update ref to avoid stale closure
+  useEffect(() => {
+    onNewMessageRef.current = onNewMessage
+  }, [onNewMessage])
 
   useEffect(() => {
     if (!user || !conversationId) return
 
-    let channel: RealtimeChannel
+    // Clean up previous subscription
+    if (channelRef.current) {
+      supabase.removeChannel(channelRef.current)
+      channelRef.current = null
+    }
 
     const setupRealtimeSubscription = async () => {
-      // Subscribe to new messages for this conversation
-      channel = supabase
+      const channel = supabase
         .channel(`messages:${conversationId}`)
         .on(
           'postgres_changes',
@@ -28,41 +38,43 @@ export function useRealtimeMessages(
             filter: `conversation_id=eq.${conversationId}`,
           },
           async (payload) => {
-            console.log('New message received:', payload.new)
-            
-            // Don't add if it's our own message (already added optimistically)
+            // Skip our own messages (already added optimistically)
             if (payload.new.sender_id === user.id) {
               return
             }
 
-            // Fetch sender profile
-            const { data: senderProfile } = await supabase
-              .from('profiles')
-              .select('*')
-              .eq('id', payload.new.sender_id)
-              .single()
+            try {
+              const { data: senderProfile } = await supabase
+                .from('profiles')
+                .select('*')
+                .eq('id', payload.new.sender_id)
+                .single()
 
-            const messageWithSender = {
-              ...payload.new,
-              sender: senderProfile,
+              const messageWithSender = {
+                ...payload.new,
+                sender: senderProfile,
+              }
+
+              onNewMessageRef.current(messageWithSender)
+            } catch (error) {
+              console.error('Error fetching sender profile:', error)
+              // Still add message even if profile fetch fails
+              onNewMessageRef.current(payload.new)
             }
-
-            onNewMessage(messageWithSender)
           }
         )
-        .subscribe((status) => {
-          console.log('Realtime subscription status:', status)
-        })
+        .subscribe()
+
+      channelRef.current = channel
     }
 
     setupRealtimeSubscription()
 
-    // Cleanup subscription on unmount
     return () => {
-      if (channel) {
-        console.log('Unsubscribing from realtime messages')
-        supabase.removeChannel(channel)
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current)
+        channelRef.current = null
       }
     }
-  }, [conversationId, user, supabase, onNewMessage])
+  }, [conversationId, user?.id, supabase])
 }

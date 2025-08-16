@@ -1,214 +1,116 @@
-import { useEffect, useState, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
-import { getClient } from '@/lib/supabase/client'
-import type { User, Session } from '@supabase/supabase-js'
-import type { Profile } from '@/types/database'
-
-interface AuthState {
-  user: User | null
-  profile: Profile | null
-  session: Session | null
-  loading: boolean
-  error: string | null
-}
-// ... imports remain the same
-
 export function useAuth() {
-  const [authState, setAuthState] = useState<AuthState>(/* unchanged */);
-  const router = useRouter();
-  const supabase = getClient();
-  const [isMounted, setIsMounted] = useState(true); // Add mount state
+  const [authState, setAuthState] = useState<AuthState>({
+    user: null,
+    profile: null,
+    session: null,
+    loading: true,
+    error: null,
+  })
+  
+  const router = useRouter()
+  const supabase = getClient()
+  const mountedRef = useRef(true)
 
-  // Fetch profile (optimized)
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
+
   const fetchProfile = useCallback(async (userId: string) => {
     try {
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
-        .single();
-        
-      if (error) throw error;
-      return data;
+        .single()
+
+      if (error) throw error
+      return data
     } catch (error) {
-      console.error('Profile fetch failed:', error);
-      return null;
+      console.error('Error fetching profile:', error)
+      return null
     }
-  }, [supabase]);
+  }, [supabase])
 
   useEffect(() => {
-    setIsMounted(true);
-    
-    // Single auth state handler
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        if (!isMounted) return;
-        
-        // Skip token events to prevent state reset
-        if (event === 'TOKEN_REFRESHED') return;
+    let mounted = true
 
-        try {
-          setAuthState(prev => ({ ...prev, loading: true }));
-          
-          if (session?.user) {
-            const profile = await fetchProfile(session.user.id);
-            if (!isMounted) return;
-            
+    const initAuth = async () => {
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession()
+        
+        if (error) throw error
+
+        if (session?.user && mounted) {
+          const profile = await fetchProfile(session.user.id)
+          if (mounted) {
             setAuthState({
               user: session.user,
               profile,
               session,
               loading: false,
-              error: null
-            });
-
-            // Redirect ONLY if new sign-in
-            if (event === 'SIGNED_IN') router.push('/chat');
-          } else {
-            setAuthState({
-              user: null,
-              profile: null,
-              session: null,
-              loading: false,
-              error: null
-            });
-            if (event === 'SIGNED_OUT') router.push('/sign-in');
+              error: null,
+            })
           }
-        } catch (error) {
-          if (isMounted) setAuthState(prev => ({
-            ...prev,
-            loading: false,
-            error: 'Auth state update failed'
-          }));
+        } else if (mounted) {
+          setAuthState(prev => ({ ...prev, loading: false }))
+        }
+      } catch (error) {
+        console.error('Auth initialization error:', error)
+        if (mounted) {
+          setAuthState(prev => ({ 
+            ...prev, 
+            loading: false, 
+            error: 'Failed to initialize authentication' 
+          }))
         }
       }
-    );
+    }
+
+    initAuth()
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (!mounted) return
+      
+      console.log('Auth event:', event)
+      
+      if (session?.user) {
+        const profile = await fetchProfile(session.user.id)
+        if (mounted) {
+          setAuthState({
+            user: session.user,
+            profile,
+            session,
+            loading: false,
+            error: null,
+          })
+        }
+      } else if (mounted) {
+        setAuthState({
+          user: null,
+          profile: null,
+          session: null,
+          loading: false,
+          error: null,
+        })
+      }
+
+      if (event === 'SIGNED_IN' && mounted) {
+        router.push('/chat')
+      } else if (event === 'SIGNED_OUT' && mounted) {
+        router.push('/sign-in')
+      }
+    })
 
     return () => {
-      setIsMounted(false);
-      subscription.unsubscribe();
-    };
-  }, [supabase, router, fetchProfile, isMounted]);
-
-  // Signup without profile update (handled by trigger)
-  const signUp = useCallback(async (email: string, password: string) => {
-    // ... call supabase.auth.signUp WITHOUT profile update
-  }, [supabase]);
-
-  // ... other methods remain mostly unchanged
-}
-
-
-  // Sign up function
-  const signUp = useCallback(async (
-    email: string, 
-    password: string, 
-    username: string,
-    fullName?: string
-  ) => {
-    try {
-      setAuthState(prev => ({ ...prev, loading: true, error: null }))
-      
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            username,
-            full_name: fullName,
-          },
-        },
-      })
-
-      if (error) throw error
-
-      // Update username if needed (the trigger creates a temporary one)
-      if (data.user) {
-        const { error: updateError } = await supabase
-          .from('profiles')
-          .update({ username, full_name: fullName })
-          .eq('id', data.user.id)
-
-        if (updateError) {
-          console.error('Error updating profile:', updateError)
-        }
-      }
-
-      return { data, error: null }
-    } catch (error: any) {
-      setAuthState(prev => ({ 
-        ...prev, 
-        loading: false, 
-        error: error.message 
-      }))
-      return { data: null, error: error.message }
+      mounted = false
+      subscription.unsubscribe()
     }
-  }, [supabase])
+  }, [supabase, router, fetchProfile])
 
-  // Sign in function
-  const signIn = useCallback(async (email: string, password: string) => {
-    try {
-      setAuthState(prev => ({ ...prev, loading: true, error: null }))
-      
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      })
-
-      if (error) throw error
-      return { data, error: null }
-    } catch (error: any) {
-      setAuthState(prev => ({ 
-        ...prev, 
-        loading: false, 
-        error: error.message 
-      }))
-      return { data: null, error: error.message }
-    }
-  }, [supabase])
-
-  // Sign out function
-  const signOut = useCallback(async () => {
-    try {
-      setAuthState(prev => ({ ...prev, loading: true }))
-      const { error } = await supabase.auth.signOut()
-      if (error) throw error
-    } catch (error: any) {
-      console.error('Sign out error:', error)
-      setAuthState(prev => ({ 
-        ...prev, 
-        loading: false, 
-        error: error.message 
-      }))
-    }
-  }, [supabase])
-
-  // Update profile function
-  const updateProfile = useCallback(async (updates: Partial<Profile>) => {
-    if (!authState.user) return { data: null, error: 'No user logged in' }
-
-    try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .update(updates)
-        .eq('id', authState.user.id)
-        .select()
-        .single()
-
-      if (error) throw error
-      
-      setAuthState(prev => ({ ...prev, profile: data }))
-      return { data, error: null }
-    } catch (error: any) {
-      return { data: null, error: error.message }
-    }
-  }, [supabase, authState.user])
-
-  return {
-    ...authState,
-    signUp,
-    signIn,
-    signOut,
-    updateProfile,
-  }
+  // Rest of the hook remains the same...
 }

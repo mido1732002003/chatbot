@@ -9,10 +9,6 @@ export function useConversation() {
   const { user } = useAuthContext()
   const supabase = getClient()
 
-  /**
-   * Get or create a conversation between current user and another user
-   * Uses the pair_key to ensure uniqueness
-   */
   const getOrCreateConversation = useCallback(async (
     otherUserId: string
   ): Promise<ConversationWithParticipants | null> => {
@@ -21,29 +17,29 @@ export function useConversation() {
       return null
     }
 
+    // Validate UUID format
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    if (!uuidRegex.test(otherUserId) || !uuidRegex.test(user.id)) {
+      setError('Invalid user ID format')
+      return null
+    }
+
     try {
       setLoading(true)
       setError(null)
 
-      // Generate the pair key (handled by database but we can check first)
-      const member1 = user.id < otherUserId ? user.id : otherUserId
-      const member2 = user.id < otherUserId ? otherUserId : user.id
-      const pairKey = `${member1}:${member2}`
-
-      // First, try to find existing conversation
-      const { data: existingConversation, error: fetchError } = await supabase
+      // First, try to find existing conversation using both possible member combinations
+      const { data: existingConversations, error: fetchError } = await supabase
         .from('conversations')
         .select(`
           *,
           member_one_profile:profiles!conversations_member_one_fkey(*),
           member_two_profile:profiles!conversations_member_two_fkey(*)
         `)
-        .or(`member_one.eq.${user.id},member_two.eq.${user.id}`)
-        .or(`member_one.eq.${otherUserId},member_two.eq.${otherUserId}`)
-        .single()
+        .or(`and(member_one.eq.${user.id},member_two.eq.${otherUserId}),and(member_one.eq.${otherUserId},member_two.eq.${user.id})`)
 
-      if (existingConversation && !fetchError) {
-        return existingConversation as unknown as ConversationWithParticipants
+      if (!fetchError && existingConversations && existingConversations.length > 0) {
+        return existingConversations[0] as unknown as ConversationWithParticipants
       }
 
       // If no conversation exists, create one
@@ -61,21 +57,21 @@ export function useConversation() {
         .single()
 
       if (createError) {
-        // If we get a unique violation, try fetching again
+        // Handle unique constraint violation
         if (createError.code === '23505') {
-          const { data: retryConversation } = await supabase
+          // Retry fetching
+          const { data: retryData } = await supabase
             .from('conversations')
             .select(`
               *,
               member_one_profile:profiles!conversations_member_one_fkey(*),
               member_two_profile:profiles!conversations_member_two_fkey(*)
             `)
-            .or(`member_one.eq.${user.id},member_two.eq.${user.id}`)
-            .or(`member_one.eq.${otherUserId},member_two.eq.${otherUserId}`)
+            .or(`and(member_one.eq.${user.id},member_two.eq.${otherUserId}),and(member_one.eq.${otherUserId},member_two.eq.${user.id})`)
             .single()
 
-          if (retryConversation) {
-            return retryConversation as unknown as ConversationWithParticipants
+          if (retryData) {
+            return retryData as unknown as ConversationWithParticipants
           }
         }
         throw createError
@@ -91,9 +87,6 @@ export function useConversation() {
     }
   }, [user, supabase])
 
-  /**
-   * Get all conversations for the current user
-   */
   const getUserConversations = useCallback(async (): Promise<ConversationWithParticipants[]> => {
     if (!user) {
       setError('User not authenticated')
@@ -109,14 +102,34 @@ export function useConversation() {
         .select(`
           *,
           member_one_profile:profiles!conversations_member_one_fkey(*),
-          member_two_profile:profiles!conversations_member_two_fkey(*)
+          member_two_profile:profiles!conversations_member_two_fkey(*),
+          messages(
+            id,
+            body,
+            created_at,
+            sender_id
+          )
         `)
         .or(`member_one.eq.${user.id},member_two.eq.${user.id}`)
         .order('created_at', { ascending: false })
 
       if (error) throw error
 
-      return data as unknown as ConversationWithParticipants[]
+      // Process to get last message for each conversation
+      const conversationsWithLastMessage = data?.map(conv => {
+        const messages = conv.messages || []
+        const lastMessage = messages.sort((a: any, b: any) => 
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        )[0] || null
+
+        return {
+          ...conv,
+          last_message: lastMessage,
+          messages: undefined, // Remove messages array from result
+        }
+      })
+
+      return conversationsWithLastMessage as unknown as ConversationWithParticipants[]
     } catch (err: any) {
       console.error('Error fetching conversations:', err)
       setError(err.message || 'Failed to load conversations')

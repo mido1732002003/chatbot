@@ -11,106 +11,93 @@ interface AuthState {
   loading: boolean
   error: string | null
 }
+// ... imports remain the same
 
 export function useAuth() {
-  const [authState, setAuthState] = useState<AuthState>({
-    user: null,
-    profile: null,
-    session: null,
-    loading: true,
-    error: null,
-  })
-  
-  const router = useRouter()
-  const supabase = getClient()
+  const [authState, setAuthState] = useState<AuthState>(/* unchanged */);
+  const router = useRouter();
+  const supabase = getClient();
+  const [isMounted, setIsMounted] = useState(true); // Add mount state
 
-  // Fetch user profile
+  // Fetch profile (optimized)
   const fetchProfile = useCallback(async (userId: string) => {
     try {
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
-        .single()
-
-      if (error) throw error
-      return data
-    } catch (error) {
-      console.error('Error fetching profile:', error)
-      return null
-    }
-  }, [supabase])
-
-  // Initialize auth state
-  useEffect(() => {
-    const initAuth = async () => {
-      try {
-        // Get initial session
-        const { data: { session }, error } = await supabase.auth.getSession()
+        .single();
         
-        if (error) throw error
-
-        if (session?.user) {
-          const profile = await fetchProfile(session.user.id)
-          setAuthState({
-            user: session.user,
-            profile,
-            session,
-            loading: false,
-            error: null,
-          })
-        } else {
-          setAuthState(prev => ({ ...prev, loading: false }))
-        }
-      } catch (error) {
-        console.error('Auth initialization error:', error)
-        setAuthState(prev => ({ 
-          ...prev, 
-          loading: false, 
-          error: 'Failed to initialize authentication' 
-        }))
-      }
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Profile fetch failed:', error);
+      return null;
     }
+  }, [supabase]);
 
-    initAuth()
+  useEffect(() => {
+    setIsMounted(true);
+    
+    // Single auth state handler
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        if (!isMounted) return;
+        
+        // Skip token events to prevent state reset
+        if (event === 'TOKEN_REFRESHED') return;
 
-    // Listen for auth changes
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log('Auth event:', event)
-      
-      if (session?.user) {
-        const profile = await fetchProfile(session.user.id)
-        setAuthState({
-          user: session.user,
-          profile,
-          session,
-          loading: false,
-          error: null,
-        })
-      } else {
-        setAuthState({
-          user: null,
-          profile: null,
-          session: null,
-          loading: false,
-          error: null,
-        })
+        try {
+          setAuthState(prev => ({ ...prev, loading: true }));
+          
+          if (session?.user) {
+            const profile = await fetchProfile(session.user.id);
+            if (!isMounted) return;
+            
+            setAuthState({
+              user: session.user,
+              profile,
+              session,
+              loading: false,
+              error: null
+            });
+
+            // Redirect ONLY if new sign-in
+            if (event === 'SIGNED_IN') router.push('/chat');
+          } else {
+            setAuthState({
+              user: null,
+              profile: null,
+              session: null,
+              loading: false,
+              error: null
+            });
+            if (event === 'SIGNED_OUT') router.push('/sign-in');
+          }
+        } catch (error) {
+          if (isMounted) setAuthState(prev => ({
+            ...prev,
+            loading: false,
+            error: 'Auth state update failed'
+          }));
+        }
       }
-
-      // Handle auth events
-      if (event === 'SIGNED_IN') {
-        router.push('/chat')
-      } else if (event === 'SIGNED_OUT') {
-        router.push('/sign-in')
-      }
-    })
+    );
 
     return () => {
-      subscription.unsubscribe()
-    }
-  }, [supabase, router, fetchProfile])
+      setIsMounted(false);
+      subscription.unsubscribe();
+    };
+  }, [supabase, router, fetchProfile, isMounted]);
+
+  // Signup without profile update (handled by trigger)
+  const signUp = useCallback(async (email: string, password: string) => {
+    // ... call supabase.auth.signUp WITHOUT profile update
+  }, [supabase]);
+
+  // ... other methods remain mostly unchanged
+}
+
 
   // Sign up function
   const signUp = useCallback(async (

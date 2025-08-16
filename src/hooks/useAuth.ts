@@ -1,151 +1,137 @@
-// useAuth.ts
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { useRouter } from 'next/navigation'
-import { getClient } from '@/lib/supabaseClient'
+'use client'
 
-interface AuthState {
-  user: any | null
-  profile: any | null
-  session: any | null
+import { useState, useEffect, useCallback } from 'react'
+import { getClient } from '@/lib/supabase/client'
+import type { User, Session } from '@supabase/supabase-js'
+import type { Database } from '@/types/database'
+
+type Profile = Database['public']['Tables']['profiles']['Row']
+
+type AuthState = {
+  user: User | null
+  profile: Profile | null
+  session: Session | null
   loading: boolean
   error: string | null
-  signIn: (email: string, password: string) => Promise<{ error: string | null }>
-  signOut: () => Promise<void>
 }
 
 export function useAuth() {
-  const [authState, setAuthState] = useState<Omit<AuthState, 'signIn' | 'signOut'>>({
+  const supabase = getClient()
+  const [authState, setAuthState] = useState<AuthState>({
     user: null,
     profile: null,
     session: null,
-    loading: true,
+    loading: false, // 👈 ما تبدأش بلودينج
     error: null,
   })
-  
-  const router = useRouter()
-  const supabase = getClient()
-  const mountedRef = useRef(true)
 
+  // fetch profile helper
   const fetchProfile = useCallback(async (userId: string) => {
-    try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .single()
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', userId)
+      .single()
 
-      if (error) throw error
-      return data
-    } catch (error) {
-      console.error('Error fetching profile:', error)
+    if (error) {
+      console.error('Error fetching profile:', error.message)
       return null
     }
+    return data
   }, [supabase])
 
+  // init session on mount
   useEffect(() => {
-    let mounted = true
-
-    const initAuth = async () => {
-      try {
-        const { data: { session }, error } = await supabase.auth.getSession()
-        
-        if (error) throw error
-
-        if (session?.user && mounted) {
-          const profile = await fetchProfile(session.user.id)
-          if (mounted) {
-            setAuthState({
-              user: session.user,
-              profile,
-              session,
-              loading: false,
-              error: null,
-            })
-          }
-        } else if (mounted) {
-          setAuthState({
-            user: null,
-            profile: null,
-            session: null,
-            loading: false,
-            error: null,
-          })
-        }
-      } catch (error) {
-        console.error('Auth initialization error:', error)
-        if (mounted) {
-          setAuthState({ 
-            user: null,
-            profile: null,
-            session: null,
-            loading: false, 
-            error: 'Failed to initialize authentication' 
-          })
-        }
-      }
+    const init = async () => {
+      setAuthState((prev) => ({ ...prev, loading: true }))
+      const { data } = await supabase.auth.getSession()
+      const session = data.session
+      setAuthState({
+        user: session?.user ?? null,
+        profile: session?.user ? await fetchProfile(session.user.id) : null,
+        session,
+        loading: false,
+        error: null,
+      })
     }
 
-    initAuth()
+    init()
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (!mounted) return
-      
-      console.log('Auth event:', event)
-      
-      if (session?.user) {
-        const profile = await fetchProfile(session.user.id)
-        if (mounted) {
-          setAuthState({
-            user: session.user,
-            profile,
-            session,
-            loading: false,
-            error: null,
-          })
-        }
-      } else if (mounted) {
+    // subscribe to auth changes
+    const { data: listener } = supabase.auth.onAuthStateChange(
+      async (_event, session) => {
         setAuthState({
-          user: null,
-          profile: null,
-          session: null,
+          user: session?.user ?? null,
+          profile: session?.user ? await fetchProfile(session.user.id) : null,
+          session,
           loading: false,
           error: null,
         })
       }
-
-      if (event === 'SIGNED_IN' && mounted) {
-        router.push('/chat')
-      } else if (event === 'SIGNED_OUT' && mounted) {
-        router.push('/sign-in')
-      }
-    })
+    )
 
     return () => {
-      mounted = false
-      subscription.unsubscribe()
+      listener.subscription.unsubscribe()
     }
-  }, [supabase, router, fetchProfile])
+  }, [supabase, fetchProfile])
 
-  // ✅ signIn
-  const signIn = async (email: string, password: string) => {
+  // auth methods
+  const signIn = useCallback(async (email: string, password: string) => {
+    setAuthState((prev) => ({ ...prev, loading: true }))
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
     })
-
     if (error) {
+      setAuthState((prev) => ({ ...prev, error: error.message, loading: false }))
       return { error: error.message }
     }
-
+    const user = data.user
+    const profile = user ? await fetchProfile(user.id) : null
+    setAuthState({
+      user,
+      profile,
+      session: data.session,
+      loading: false,
+      error: null,
+    })
     return { error: null }
-  }
+  }, [supabase, fetchProfile])
 
-  // ✅ signOut
-  const signOut = async () => {
+  const signUp = useCallback(async (email: string, password: string) => {
+    setAuthState((prev) => ({ ...prev, loading: true }))
+    const { data, error } = await supabase.auth.signUp({ email, password })
+    if (error) {
+      setAuthState((prev) => ({ ...prev, error: error.message, loading: false }))
+      return { error: error.message }
+    }
+    const user = data.user
+    const profile = user ? await fetchProfile(user.id) : null
+    setAuthState({
+      user,
+      profile,
+      session: data.session,
+      loading: false,
+      error: null,
+    })
+    return { error: null }
+  }, [supabase, fetchProfile])
+
+  const signOut = useCallback(async () => {
     await supabase.auth.signOut()
-  }
+    setAuthState({
+      user: null,
+      profile: null,
+      session: null,
+      loading: false,
+      error: null,
+    })
+  }, [supabase])
 
-  return { ...authState, signIn, signOut }
+  return {
+    ...authState,
+    signIn,
+    signUp,
+    signOut,
+  }
 }

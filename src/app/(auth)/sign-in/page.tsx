@@ -4,12 +4,12 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { SignInForm } from '@/components/auth/SignInForm'
-import { useAuthContext } from '@/components/providers/AuthProvider'
+import { useAuth } from '@/hooks/useAuth' // Changed from useAuthContext
 import type { SignInFormData } from '@/types/chat'
 
 export default function SignInPage() {
   const router = useRouter()
-  const { signIn } = useAuthContext()
+  const { signIn, loading: authLoading } = useAuth() // Get auth loading state
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -17,16 +17,19 @@ export default function SignInPage() {
     setIsLoading(true)
     setError(null)
 
-    const { error } = await signIn(formData.email, formData.password)
-
-    if (error) {
-      setError(error)
+    try {
+      const { error } = await signIn(formData.email, formData.password)
+      if (error) {
+        setError(error)
+      }
+      // Let useAuth handle the redirect automatically
+    } finally {
       setIsLoading(false)
-    } else {
-      // Redirect handled by auth hook
-      router.push('/chat')
     }
   }
+
+  // Combined loading state
+  const effectiveLoading = isLoading || authLoading
 
   return (
     <div className="w-full space-y-6">
@@ -40,7 +43,7 @@ export default function SignInPage() {
       <div className="bg-background border rounded-lg shadow-sm p-6">
         <SignInForm
           onSubmit={handleSignIn}
-          isLoading={isLoading}
+          isLoading={effectiveLoading} // Use combined loading state
           error={error}
         />
       </div>

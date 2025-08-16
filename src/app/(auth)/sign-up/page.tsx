@@ -4,12 +4,12 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { SignUpForm } from '@/components/auth/SignUpForm'
-import { useAuthContext } from '@/components/providers/AuthProvider'
+import { useAuth } from '@/hooks/useAuth' // Changed from useAuthContext
 import type { SignUpFormData } from '@/types/chat'
 
 export default function SignUpPage() {
   const router = useRouter()
-  const { signUp } = useAuthContext()
+  const { signUp, loading: authLoading } = useAuth() // Get auth loading state
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
@@ -18,25 +18,27 @@ export default function SignUpPage() {
     setIsLoading(true)
     setError(null)
 
-    const { data, error } = await signUp(
-      formData.email,
-      formData.password,
-      formData.username,
-      formData.full_name
-    )
+    try {
+      const { error } = await signUp(
+        formData.email,
+        formData.password,
+        formData.username,
+        formData.full_name
+      )
 
-    setIsLoading(false)
-
-    if (error) {
-      setError(error)
-    } else if (data?.user) {
-      setSuccess(true)
-      // Auto sign in after successful registration
-      setTimeout(() => {
-        router.push('/chat')
-      }, 2000)
+      if (error) {
+        setError(error)
+      } else {
+        setSuccess(true) // Show success message
+        // Let useAuth handle the redirect automatically
+      }
+    } finally {
+      setIsLoading(false)
     }
   }
+
+  // Combined loading state
+  const effectiveLoading = isLoading || authLoading
 
   if (success) {
     return (
@@ -46,7 +48,7 @@ export default function SignUpPage() {
             Account created successfully!
           </h2>
           <p className="text-green-700">
-            Redirecting you to the chat...
+            You'll be redirected automatically...
           </p>
         </div>
       </div>
@@ -65,7 +67,7 @@ export default function SignUpPage() {
       <div className="bg-background border rounded-lg shadow-sm p-6">
         <SignUpForm
           onSubmit={handleSignUp}
-          isLoading={isLoading}
+          isLoading={effectiveLoading} // Use combined loading state
           error={error}
         />
       </div>

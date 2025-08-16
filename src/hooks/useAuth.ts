@@ -1,3 +1,15 @@
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { useRouter } from 'next/navigation'
+import { createClient } from '@/lib/supabase/client'
+
+interface AuthState {
+  user: any | null
+  profile: any | null
+  session: any | null
+  loading: boolean
+  error: string | null
+}
+
 export function useAuth() {
   const [authState, setAuthState] = useState<AuthState>({
     user: null,
@@ -8,7 +20,7 @@ export function useAuth() {
   })
   
   const router = useRouter()
-  const supabase = getClient()
+  const supabase = createClient()
   const mountedRef = useRef(true)
 
   // Cleanup on unmount
@@ -55,56 +67,65 @@ export function useAuth() {
             })
           }
         } else if (mounted) {
-          setAuthState(prev => ({ ...prev, loading: false }))
+          // لازم هنا نوقف اللف ونقول انه مش لوج ان
+          setAuthState({
+            user: null,
+            profile: null,
+            session: null,
+            loading: false,
+            error: null,
+          })
         }
       } catch (error) {
         console.error('Auth initialization error:', error)
         if (mounted) {
-          setAuthState(prev => ({ 
-            ...prev, 
+          setAuthState({ 
+            user: null,
+            profile: null,
+            session: null,
             loading: false, 
             error: 'Failed to initialize authentication' 
-          }))
+          })
         }
       }
     }
 
     initAuth()
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (!mounted) return
-      
-      console.log('Auth event:', event)
-      
-      if (session?.user) {
-        const profile = await fetchProfile(session.user.id)
-        if (mounted) {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        if (!mounted) return
+        
+        console.log('Auth event:', event)
+        
+        if (session?.user) {
+          const profile = await fetchProfile(session.user.id)
+          if (mounted) {
+            setAuthState({
+              user: session.user,
+              profile,
+              session,
+              loading: false,
+              error: null,
+            })
+          }
+        } else if (mounted) {
           setAuthState({
-            user: session.user,
-            profile,
-            session,
+            user: null,
+            profile: null,
+            session: null,
             loading: false,
             error: null,
           })
         }
-      } else if (mounted) {
-        setAuthState({
-          user: null,
-          profile: null,
-          session: null,
-          loading: false,
-          error: null,
-        })
-      }
 
-      if (event === 'SIGNED_IN' && mounted) {
-        router.push('/chat')
-      } else if (event === 'SIGNED_OUT' && mounted) {
-        router.push('/sign-in')
+        if (event === 'SIGNED_IN' && mounted) {
+          router.push('/chat')
+        } else if (event === 'SIGNED_OUT' && mounted) {
+          router.push('/sign-in')
+        }
       }
-    })
+    )
 
     return () => {
       mounted = false
@@ -112,5 +133,5 @@ export function useAuth() {
     }
   }, [supabase, router, fetchProfile])
 
-  // Rest of the hook remains the same...
+  return authState
 }
